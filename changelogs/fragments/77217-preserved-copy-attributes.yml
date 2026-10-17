@@ -1,0 +1,2 @@
+bugfixes:
+  - AnsibleModule.preserved_copy - do not fail the module when the destination filesystem rejects source file attributes such as ext4 extents (https://github.com/ansible/ansible/issues/77217).
