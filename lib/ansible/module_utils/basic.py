@@ -935,7 +935,7 @@ class AnsibleModule(object):
                 changed = True
         return changed
 
-    def set_attributes_if_different(self, path, attributes, changed, diff=None, expand=True):
+    def set_attributes_if_different(self, path, attributes, changed, diff=None, expand=True, best_effort=False):
 
         if attributes is None:
             return changed
@@ -974,7 +974,15 @@ class AnsibleModule(object):
                         if rc != 0 or err:
                             raise Exception("Error while setting attributes: %s" % (out + err))
                     except Exception as e:
-                        self.fail_json(path=to_text(b_path), msg='chattr failed', details=to_native(e))
+                        # Callers that only copy attributes (preserved_copy) must not fail the
+                        # module when the destination filesystem cannot store the source flags.
+                        if best_effort:
+                            self.warn(
+                                "Unable to set file attributes on %s: %s" % (to_text(b_path), to_native(e)),
+                                help_text="File contents were still copied. Attribute flags are not portable across filesystems.",
+                            )
+                        else:
+                            self.fail_json(path=to_text(b_path), msg='chattr failed', details=to_native(e))
         return changed
 
     def get_file_attributes(self, path, include_version=True):
@@ -1697,10 +1705,11 @@ class AnsibleModule(object):
             if e.errno != errno.EPERM:
                 raise
 
-        # Set the attributes
+        # Set the attributes. Flags such as ext4 extents are not portable; a
+        # destination that rejects them should not fail the copy.
         current_attribs = self.get_file_attributes(src, include_version=False)
         current_attribs = current_attribs.get('attr_flags', '')
-        self.set_attributes_if_different(dest, current_attribs, True)
+        self.set_attributes_if_different(dest, current_attribs, True, best_effort=True)
 
     def atomic_move(self, src, dest, unsafe_writes=False, keep_dest_attrs=True):
         """atomically move src to dest, copying attributes from dest, returns true on success

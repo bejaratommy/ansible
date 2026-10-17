@@ -152,3 +152,45 @@ class TestOtherFilesystem(unittest.TestCase):
 
         assert am.set_directory_attributes_if_different(file_args, True)
         assert not am.set_directory_attributes_if_different(file_args, False)
+
+    def test_set_attributes_if_different_best_effort_warns_instead_of_failing(self):
+        from ansible.module_utils import basic
+
+        am = basic.AnsibleModule(
+            argument_spec=dict(),
+        )
+
+        with patch.object(am, 'get_file_attributes', return_value={'attr_flags': ''}), \
+                patch.object(am, 'get_bin_path', return_value='/usr/bin/chattr'), \
+                patch.object(am, 'run_command', return_value=(1, '', 'chattr: Operation not supported\n')), \
+                patch.object(am, 'warn') as warn:
+            changed = am.set_attributes_if_different('/dest', 'e', False, best_effort=True)
+
+        assert changed
+        warn.assert_called_once()
+        assert 'Unable to set file attributes' in warn.call_args.args[0]
+
+        with patch.object(am, 'get_file_attributes', return_value={'attr_flags': ''}), \
+                patch.object(am, 'get_bin_path', return_value='/usr/bin/chattr'), \
+                patch.object(am, 'run_command', return_value=(1, '', 'chattr: Operation not supported\n')):
+            self.assertRaises(SystemExit, am.set_attributes_if_different, '/dest', 'e', False)
+
+    def test_preserved_copy_requests_best_effort_attributes(self):
+        from ansible.module_utils import basic
+
+        am = basic.AnsibleModule(
+            argument_spec=dict(),
+        )
+        am.selinux_enabled = lambda: False
+
+        stat_result = MagicMock()
+        stat_result.st_uid = 0
+        stat_result.st_gid = 0
+
+        with patch('shutil.copy2'), \
+                patch('os.stat', return_value=stat_result), \
+                patch.object(am, 'get_file_attributes', return_value={'attr_flags': 'e'}), \
+                patch.object(am, 'set_attributes_if_different') as set_attrs:
+            am.preserved_copy('/src', '/dest')
+
+        set_attrs.assert_called_once_with('/dest', 'e', True, best_effort=True)
